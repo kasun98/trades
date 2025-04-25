@@ -1,0 +1,8 @@
+requests
+apache-airflow
+python-dotenv
+pandas
+pyarrow
+psycopg2-binary
+boto3
+

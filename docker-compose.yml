@@ -1,0 +1,232 @@
+version: '3'
+services:
+  zookeeper:
+      image: confluentinc/cp-zookeeper:7.4.0
+      hostname: zookeeper
+      container_name: zookeeper
+      ports:
+        - "2181:2181"
+      environment:
+        ZOOKEEPER_CLIENT_PORT: 2181
+        ZOOKEEPER_TICK_TIME: 2000
+      healthcheck:
+        test: ['CMD', 'bash', '-c', "echo 'ok' | nc localhost 2181"]
+        interval: 10s
+        timeout: 5s
+        retries: 5
+      networks:
+        - confluent
+
+  broker:
+    image: confluentinc/cp-server:7.4.0
+    hostname: broker
+    container_name: broker
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    ports:
+      - "9092:9092"
+      - "9101:9101"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://broker:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_METRIC_REPORTERS: io.confluent.metrics.reporter.ConfluentMetricsReporter
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_CONFLUENT_LICENSE_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_CONFLUENT_BALANCER_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_JMX_PORT: 9101
+      KAFKA_JMX_HOSTNAME: localhost
+      CONFLUENT_METRICS_REPORTER_BOOTSTRAP_SERVERS: broker:29092
+      CONFLUENT_METRICS_REPORTER_TOPIC_REPLICAS: 1
+      CONFLUENT_METRICS_ENABLE: 'false'
+      CONFLUENT_SUPPORT_CUSTOMER_ID: 'anonymous'
+    networks:
+      - confluent
+    healthcheck:
+      test: [ "CMD", "bash", "-c", 'nc -z localhost 9092' ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  control-center:
+    image: confluentinc/cp-enterprise-control-center:7.4.0
+    hostname: control-center
+    container_name: control-center
+    depends_on:
+      broker:
+        condition: service_healthy
+    ports:
+      - "9021:9021"
+    environment:
+      CONTROL_CENTER_BOOTSTRAP_SERVERS: 'broker:29092'
+      CONTROL_CENTER_REPLICATION_FACTOR: 1
+      CONTROL_CENTER_INTERNAL_TOPICS_PARTITIONS: 1
+      CONTROL_CENTER_MONITORING_INTERCEPTOR_TOPIC_PARTITIONS: 1
+      CONFLUENT_METRICS_TOPIC_REPLICATION: 1
+      CONFLUENT_METRICS_ENABLE: 'false'
+      PORT: 9021
+    networks:
+      - confluent
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:9021/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    command: redis-server --notify-keyspace-events KEx
+    networks:
+      - confluent
+    volumes:
+      - redis_data:/data
+  
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: redis-commander
+    environment:
+      - REDIS_HOSTS=local:redis:6379
+    ports:
+      - "8081:8081"
+    depends_on:
+      - redis
+    networks:
+      - confluent
+
+  questdb:
+    image: questdb/questdb:latest
+    container_name: questdb
+    ports:
+      - "9000:9000"     # Web UI
+      - "8812:8812"     # Postgres wire protocol
+      - "9009:9009"     # InfluxDB line protocol (ILP TCP)
+    volumes:
+      - questdb_data:/root/.questdb
+    environment:
+      - QDB_PG_USER=admin
+      - QDB_PG_PASSWORD=admin
+      - QDB_PG_READONLY_USER=readonly
+      - QDB_PG_READONLY_PASSWORD=readonly
+      - QDB_CAIRO_POOL_MODE=any
+    networks:
+      - confluent
+    
+
+  mlflow-db:
+    image: postgres:14.0
+    environment:
+      POSTGRES_DB: mlflow_db
+      POSTGRES_USER: mlflow_user
+      POSTGRES_PASSWORD: mlflow_pass
+    volumes:
+      - mlflow-db-data:/var/lib/postgresql/data
+    ports:
+    - "5431:5432"
+    networks:
+      - confluent
+
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    ports:
+      - '9002:9000'
+      - '9001:9001'
+    networks:
+      - confluent
+    volumes:
+      - 'minio_data:/data'
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+    command: server /data --console-address ":9001"
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_INSTALL_PLUGINS=questdb-questdb-datasource
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    networks:
+      - confluent
+
+
+  webserver:
+    image: apache/airflow:2.6.0-python3.9
+    command: webserver
+    entrypoint: ['/opt/airflow/scripts/entrypoint.sh']
+    depends_on:
+      - postgres
+    environment:
+      - LOAD_EX=n
+      - EXECUTOR=Sequential
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
+      - AIRFLOW_WEBSERVER_SECRET_KEY=this_is_a_very_secured_key
+    logging:
+      options:
+        max-size: 10m
+        max-file: "3"
+    volumes:
+      - ./airflow:/opt/airflow
+      - ./airflow/.env:/opt/airflow/.env
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ['CMD-SHELL', "[ -f /opt/airflow/airflow-webserver.pid ]"]
+      interval: 60s
+      timeout: 30s
+      retries: 10
+    networks:
+      - confluent
+
+  scheduler:
+    image: apache/airflow:2.6.0-python3.9
+    depends_on:
+      webserver:
+        condition: service_healthy
+    volumes:
+      - ./airflow:/opt/airflow
+      - ./airflow/.env:/opt/airflow/.env
+    environment:
+      - LOAD_EX=n
+      - EXECUTOR=Sequential
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
+      - AIRFLOW_WEBSERVER_SECRET_KEY=this_is_a_very_secured_key
+    command: bash -c "pip install -r ./requirements.txt && airflow db upgrade && airflow scheduler"
+    networks:
+      - confluent
+
+  postgres:
+    image: postgres:14.0
+    environment:
+      - POSTGRES_USER=airflow
+      - POSTGRES_PASSWORD=airflow
+      - POSTGRES_DB=airflow
+    logging:
+      options:
+        max-size: 10m
+        max-file: "3"
+    networks:
+      - confluent
+
+
+networks:
+  confluent:
+
+volumes:
+  redis_data:
+  questdb_data:
+  mlflow-db-data:
+  minio_data:
+  grafana_data:

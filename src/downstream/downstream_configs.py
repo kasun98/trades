@@ -1,0 +1,27 @@
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+SYMBOL = os.getenv("SYMBOL")
+
+# QuestDB
+QDB_BID_TASK_NAME = os.getenv("QDB_BID_TASK_NAME")
+QDB_VOL_TASK_NAME = os.getenv("QDB_VOL_TASK_NAME")
+QDB_GOLD_BID_PRED_TABLE = os.getenv("QDB_GOLD_BID_PRED_TABLE")
+QDB_GOLD_VOL_PRED_TABLE = os.getenv("QDB_GOLD_VOL_PRED_TABLE")
+QDB_HOST = os.getenv("QDB_HOST")
+QDB_ILP_PORT = os.getenv("QDB_ILP_PORT")
+
+
+
+# Redis
+REDIS_HOST=os.getenv("REDIS_HOST")
+REDIS_PORT=os.getenv("REDIS_PORT")
+REDIS_BTC_SYMBOL=os.getenv("REDIS_BTC_SYMBOL")
+REDIS_DB_INT=os.getenv("REDIS_DB_INT")
+REDIS_TTL=os.getenv("REDIS_TTL")
+
+# ml models
+BID_MODEL_PREDICT_ENDPOINT = os.getenv("BID_MODEL_PREDICT_ENDPOINT")
+VOLATILITY_MODEL_PREDICT_ENDPOINT = os.getenv("VOLATILITY_MODEL_PREDICT_ENDPOINT")
